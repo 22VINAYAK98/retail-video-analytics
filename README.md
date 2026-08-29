@@ -281,3 +281,68 @@ At the end of this stage:
 - The bottom-center point has been selected as the reference point for future person-to-ROI classification.
 
 The next stage is to introduce **person detection and tracking** and connect the detected person's position to the verified ROI configuration.
+
+## 2. Person Detection and Tracking
+
+After defining and verifying the three ROIs, person detection and tracking were evaluated to obtain stable person identities before implementing the ROI-based entry/exit logic.
+
+### Person Detection
+
+- Initial model: **YOLO11n**
+- Class: **person**
+- Initial issue: some people were missed in individual frames, resulting in false negatives.
+- No significant false-positive detections were observed.
+- The detector was upgraded to **YOLO26m**, which provided more stable person detections on the target video.
+
+### Multi-Object Tracking
+
+- Initial tracker: **ByteTrack**
+- Challenge: longer detection gaps caused tracks to terminate and the same person could receive a new ID.
+- **BoT-SORT** was evaluated as an alternative.
+- Track buffer was increased to tolerate temporary detection gaps.
+- Camera motion compensation was disabled because the camera is stationary.
+
+### Selected Configuration
+
+The current configuration is:
+
+- **Detection:** YOLO26m
+- **Tracking:** BoT-SORT
+- **Detection class:** person
+- **Camera:** stationary
+- **Track buffer:** increased to handle temporary detection gaps
+
+The resulting detection and tracking behaviour is **mostly stable** and is sufficient to proceed with the next stage.
+
+### Experiments
+
+| Configuration | Result |
+|---|---|
+| YOLO11n | Some false negatives |
+| YOLO11n + ByteTrack | ID changes after longer detection gaps |
+| YOLO11n + BoT-SORT | Improved tracking but detector remained limiting |
+| YOLO26m + BoT-SORT | Mostly stable detection and tracking |
+
+### Files
+
+- `scripts/detect_persons.py` — Person detection experiment and visualization.
+- `scripts/track_persons.py` — Person detection and multi-object tracking.
+- `configs/botsort.yaml` — BoT-SORT tracker configuration.
+
+### Docker Commands
+
+Person detection:
+
+```bash
+docker run --rm \
+--gpus all \
+-v "$(pwd):/workspace/retail-video-analytics" \
+-w /workspace/retail-video-analytics \
+retail-video-analytics:latest \
+python scripts/detect_persons.py
+```
+
+Person track:
+``` bash 
+docker run --rm --gpus all -v "$(pwd):/workspace/retail-video-analytics" -w /workspace/retail-video-analytics retail-video-analytics:latest python scripts/track_persons.py
+```

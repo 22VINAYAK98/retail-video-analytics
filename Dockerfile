@@ -28,6 +28,7 @@ COPY requirements.txt .
 RUN python -m pip install --upgrade pip && \
     python -m pip install \
         torch==2.11.0 \
+        torchvision==0.26.0 \
         --index-url https://download.pytorch.org/whl/cu126 && \
     python -m pip install -r requirements.txt
 
