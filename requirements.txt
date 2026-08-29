@@ -1,0 +1,7 @@
+ultralytics==8.4.48
+opencv-python==4.13.0.92
+numpy==2.2.6
+pandas==2.3.3
+PyYAML==6.0.3
+scipy==1.15.3
+pytest

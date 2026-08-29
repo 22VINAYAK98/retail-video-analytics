@@ -1,0 +1,68 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+env/
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Video data
+# =========================
+data/*.mp4
+data/*.avi
+data/*.mov
+data/*.mkv
+
+# =========================
+# Model weights
+# =========================
+models/*.pt
+models/*.pth
+models/*.onnx
+models/*.engine
+models/*.weights
+
+# =========================
+# Generated outputs
+# =========================
+outputs/*.mp4
+outputs/*.avi
+outputs/*.mov
+outputs/*.mkv
+outputs/*.csv
+outputs/*.json
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Temporary files
+# =========================
+*.tmp
+*.temp
