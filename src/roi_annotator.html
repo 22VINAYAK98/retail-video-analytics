@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Retail Video Analytics - ROI Annotator</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f4f4f4;
+        }
+
+        h1 {
+            margin-bottom: 5px;
+        }
+
+        .controls {
+            margin: 15px 0;
+        }
+
+        button {
+            padding: 8px 14px;
+            margin-right: 8px;
+            cursor: pointer;
+        }
+
+        canvas {
+            border: 1px solid #333;
+            display: block;
+            max-width: 100%;
+            height: auto;
+            background: white;
+        }
+
+        #output {
+            margin-top: 20px;
+            background: white;
+            padding: 15px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+
+        .status {
+            margin: 10px 0;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+
+<h1>Retail Video Analytics — ROI Annotator</h1>
+
+<p>
+    Select the generated reference frame, then define the three ROIs
+    in order.
+</p>
+
+<div class="controls">
+
+    <input type="file" id="imageInput" accept="image/*">
+
+    <br><br>
+
+    <button onclick="finishROI()">Finish Current ROI</button>
+    <button onclick="resetROI()">Reset Current ROI</button>
+    <button onclick="undoPoint()">Undo Last Point</button>
+    <button onclick="resetAll()">Reset All</button>
+    <button onclick="copyYaml()">Copy YAML</button>
+
+</div>
+
+<div class="status" id="status">
+    Select the reference image to begin.
+</div>
+
+<canvas id="canvas"></canvas>
+
+<div id="output"></div>
+
+<script>
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const imageInput = document.getElementById("imageInput");
+const statusElement = document.getElementById("status");
+const outputElement = document.getElementById("output");
+
+const roiNames = [
+    "outside_store",
+    "inside_store_entering_area",
+    "inside_store"
+];
+
+let image = new Image();
+
+let currentROIIndex = 0;
+let currentPoints = [];
+
+let completedROIs = {};
+
+let imageLoaded = false;
+
+
+// ------------------------------------------------------------
+// Load image
+// ------------------------------------------------------------
+
+imageInput.addEventListener("change", function(event) {
+
+    const file = event.target.files[0];
+
+    if (!file) {
+        return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = function(e) {
+
+        image.onload = function() {
+
+            canvas.width = image.naturalWidth;
+            canvas.height = image.naturalHeight;
+
+            imageLoaded = true;
+
+            currentROIIndex = 0;
+            currentPoints = [];
+            completedROIs = {};
+
+            draw();
+
+            updateStatus();
+        };
+
+        image.src = e.target.result;
+    };
+
+    reader.readAsDataURL(file);
+});
+
+
+// ------------------------------------------------------------
+// Canvas click
+// ------------------------------------------------------------
+
+canvas.addEventListener("click", function(event) {
+
+    if (!imageLoaded) {
+        return;
+    }
+
+    if (currentROIIndex >= roiNames.length) {
+        return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+
+    // Convert browser/display coordinates
+    // back to original 1280x720 image coordinates.
+
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    const x = Math.round(
+        (event.clientX - rect.left) * scaleX
+    );
+
+    const y = Math.round(
+        (event.clientY - rect.top) * scaleY
+    );
+
+    currentPoints.push([x, y]);
+
+    draw();
+});
+
+
+// ------------------------------------------------------------
+// Draw everything
+// ------------------------------------------------------------
+
+function draw() {
+
+    if (!imageLoaded) {
+        return;
+    }
+
+    ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+    ctx.drawImage(
+        image,
+        0,
+        0
+    );
+
+    // Draw completed ROIs
+    for (const name in completedROIs) {
+
+        const points = completedROIs[name];
+
+        drawPolygon(
+            points,
+            false
+        );
+
+        drawLabel(
+            name,
+            points[0]
+        );
+    }
+
+    // Draw current ROI
+    if (currentPoints.length > 0) {
+
+        drawPolygon(
+            currentPoints,
+            true
+        );
+
+        currentPoints.forEach((point, index) => {
+
+            ctx.beginPath();
+
+            ctx.arc(
+                point[0],
+                point[1],
+                5,
+                0,
+                Math.PI * 2
+            );
+
+            ctx.fillStyle = "red";
+            ctx.fill();
+
+            ctx.fillStyle = "white";
+            ctx.font = "14px Arial";
+
+            ctx.fillText(
+                index.toString(),
+                point[0] + 7,
+                point[1] - 7
+            );
+        });
+    }
+}
+
+
+// ------------------------------------------------------------
+// Draw polygon
+// ------------------------------------------------------------
+
+function drawPolygon(points, current) {
+
+    if (points.length < 2) {
+        return;
+    }
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        points[0][0],
+        points[0][1]
+    );
+
+    for (let i = 1; i < points.length; i++) {
+
+        ctx.lineTo(
+            points[i][0],
+            points[i][1]
+        );
+    }
+
+    if (!current && points.length >= 3) {
+        ctx.closePath();
+    }
+
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = current ? "red" : "lime";
+
+    ctx.stroke();
+}
+
+
+// ------------------------------------------------------------
+// Draw label
+// ------------------------------------------------------------
+
+function drawLabel(name, point) {
+
+    ctx.font = "bold 18px Arial";
+    ctx.fillStyle = "yellow";
+
+    ctx.fillText(
+        name,
+        point[0] + 8,
+        point[1] - 8
+    );
+}
+
+
+// ------------------------------------------------------------
+// Finish current ROI
+// ------------------------------------------------------------
+
+function finishROI() {
+
+    if (!imageLoaded) {
+        alert("Please select an image first.");
+        return;
+    }
+
+    if (currentPoints.length < 3) {
+
+        alert(
+            "A polygon needs at least 3 points."
+        );
+
+        return;
+    }
+
+    const name = roiNames[currentROIIndex];
+
+    completedROIs[name] = [...currentPoints];
+
+    currentPoints = [];
+
+    currentROIIndex++;
+
+    draw();
+
+    updateStatus();
+
+    if (currentROIIndex >= roiNames.length) {
+
+        generateOutput();
+
+        alert(
+            "All three ROIs have been defined."
+        );
+    }
+}
+
+
+// ------------------------------------------------------------
+// Reset current ROI
+// ------------------------------------------------------------
+
+function resetROI() {
+
+    currentPoints = [];
+
+    draw();
+
+    updateStatus();
+}
+
+
+// ------------------------------------------------------------
+// Undo point
+// ------------------------------------------------------------
+
+function undoPoint() {
+
+    if (currentPoints.length === 0) {
+        return;
+    }
+
+    currentPoints.pop();
+
+    draw();
+}
+
+
+// ------------------------------------------------------------
+// Reset everything
+// ------------------------------------------------------------
+
+function resetAll() {
+
+    currentROIIndex = 0;
+
+    currentPoints = [];
+
+    completedROIs = {};
+
+    draw();
+
+    updateStatus();
+
+    outputElement.textContent = "";
+}
+
+
+// ------------------------------------------------------------
+// Status
+// ------------------------------------------------------------
+
+function updateStatus() {
+
+    if (!imageLoaded) {
+
+        statusElement.textContent =
+            "Select the reference image to begin.";
+
+        return;
+    }
+
+    if (currentROIIndex >= roiNames.length) {
+
+        statusElement.textContent =
+            "All ROIs completed.";
+
+        return;
+    }
+
+    const name = roiNames[currentROIIndex];
+
+    statusElement.textContent =
+        "Currently defining: " +
+        name +
+        " | Points: " +
+        currentPoints.length;
+}
+
+
+// ------------------------------------------------------------
+// Generate YAML
+// ------------------------------------------------------------
+
+function generateOutput() {
+
+    let yaml = "";
+
+    yaml += "rois:\n";
+
+    for (const name of roiNames) {
+
+        yaml += `  ${name}:\n`;
+        yaml += "    polygon:\n";
+
+        const points = completedROIs[name];
+
+        for (const point of points) {
+
+            yaml += `      - [${point[0]}, ${point[1]}]\n`;
+        }
+    }
+
+    outputElement.textContent = yaml;
+}
+
+
+// ------------------------------------------------------------
+// Copy YAML
+// ------------------------------------------------------------
+
+function copyYaml() {
+
+    generateOutput();
+
+    navigator.clipboard.writeText(
+        outputElement.textContent
+    );
+
+    alert("YAML copied to clipboard.");
+}
+
+</script>
+
+</body>
+</html>
