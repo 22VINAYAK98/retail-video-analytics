@@ -406,3 +406,283 @@ docker run --rm \
 retail-video-analytics:latest \
 python scripts/detect_persons.py
 ```
+
+## 3. Behavioral Classification Approach
+
+### 3.1 Trajectory Construction
+
+For every tracked person, the system maintains a trajectory using the bottom-center point of the bounding box.
+
+The trajectory is smoothed using **Recursive Least Squares (RLS)** to reduce short-term detection noise while preserving longer-term movement behaviour.
+
+The trajectory is used to obtain:
+
+- smoothed position
+- movement direction
+- speed
+- speed trend
+- ROI state over time
+
+The complete trajectory history is retained for behavioural classification, while a shorter trail is used for visualization.
+
+### 3.2 ROI-Based Spatial State
+
+The entrance scene is represented using the configured ROIs from:
+
+```text
+configs/entrance.yaml
+```
+
+The configured regions are interpreted as:
+
+```text
+outside_store                 → OUT
+inside_store_entering_area    → ENTERING
+inside_store                  → IN
+outside all relevant ROIs     → NA
+```
+
+No additional store-front ROI is introduced.
+
+Each trajectory point is assigned a semantic ROI state, producing a temporal sequence such as:
+
+```text
+OUT → OUT → ENTERING → IN
+```
+
+or:
+
+```text
+OUT → ENTERING → OUT
+```
+
+The complete ROI sequence is then used for behavioural classification.
+
+### 3.3 Initial Trajectory State
+
+The initial state of a track determines whether it is eligible for customer-interest analysis.
+
+```text
+OUT       → valid candidate
+ENTERING  → Interested + Entered
+IN        → Already Inside → Ignore
+NA        → Outside relevant ROIs → Ignore
+```
+
+This prevents people who are already inside the store, or people whose initial position is outside the defined analysis regions, from being counted as new interested customers.
+
+Tracks initially classified as `IN` or `NA` remain excluded for the lifetime of that track.
+
+### 3.4 Interest Detection from Motion
+
+For initially `OUT` people, interest is inferred from changes in their movement behaviour.
+
+Instead of applying one fixed walking-speed threshold, the system estimates a **personal baseline speed** and evaluates the longer-term speed trend obtained from the smoothed trajectory.
+
+Motion-based interest evidence includes:
+
+- sustained reduction in speed while approaching the entrance region
+- near-stop behaviour
+- a persistent negative speed trend
+
+The intention is to detect a **change in behaviour relative to the individual's own movement**, rather than assuming that every person walks at the same speed.
+
+### 3.5 Entry Detection from Trajectory
+
+Entry detection is kept separate from interest detection.
+
+A person is not considered to have entered simply because:
+
+- one frame touches the `ENTERING` ROI
+- the person slows down
+- the person approaches the entrance
+- a single noisy observation places the trajectory inside an ROI
+
+Entry is determined from the **temporal ROI trajectory**.
+
+Examples:
+
+```text
+OUT → ENTERING → IN
+    → Interested + Entered
+```
+
+```text
+OUT → IN
+    → Interested + Entered
+```
+
+```text
+OUT → ENTERING → OUT
+    → Not Entered
+```
+
+The trajectory history allows the system to handle tracker gaps and noisy individual ROI observations more robustly.
+
+A short temporal confirmation is used for the `IN` state so that a single noisy observation does not create a false entry.
+
+### 3.6 Passed-By Classification
+
+For an initially `OUT` person:
+
+```text
+Interest detected
+        +
+No confirmed transition into IN
+        +
+Trajectory continues away from the store
+        ↓
+Interested + Passed
+```
+
+For example:
+
+```text
+OUT → ENTERING → OUT
+```
+
+does not by itself indicate that the person entered the store.
+
+If interest has already been established through behavioural evidence, the final outcome is:
+
+```text
+Interested + Passed
+```
+
+This keeps **interest detection** independent from the question of whether the person actually entered the store.
+
+### 3.7 Directionality and Already-Inside Cases
+
+Trajectory direction is important because the same ROI regions can be traversed by both entering and exiting customers.
+
+For example:
+
+```text
+IN → ENTERING → OUT
+```
+
+represents an exiting person rather than a new customer entering the store.
+
+Therefore, the initial trajectory state is frozen for each track and used to distinguish between:
+
+- people approaching from outside
+- people already inside
+- people entering the store
+- people leaving the store
+
+### 3.8 Final Classification Pipeline
+
+```text
+Person Detection
+       ↓
+BoT-SORT Tracking
+       ↓
+RLS-Smoothed Trajectory
+       ↓
+ROI State History
+       ↓
+Initial State Classification
+       ↓
+ ┌───────────────┬─────────────────┐
+ │               │                 │
+IN / NA       ENTERING            OUT
+ │               │                 │
+Ignore       Interested +      Behaviour
+Forever         Entered         Analysis
+                                   │
+                           ┌───────┴───────┐
+                           │               │
+                      Entry confirmed   No entry
+                           │               │
+                           ↓               ↓
+                  Interested +       Interested +
+                      Entered             Passed
+```
+
+### 3.9 Why a Trajectory-Based Approach Was Chosen
+
+The final approach was chosen because the problem is fundamentally temporal.
+
+A single frame cannot reliably distinguish:
+
+- a person casually walking past
+- a person who slows down because they are interested
+- a person who pauses and continues
+- a person who enters the store
+- a person who is exiting the store
+
+Using the complete tracked trajectory allows spatial and temporal evidence to be combined while reducing sensitivity to individual noisy detections.
+
+The overall approach is therefore:
+
+```text
+Detection
+    +
+Tracking
+    +
+RLS trajectory smoothing
+    +
+ROI trajectory history
+    +
+Temporal behavioural evidence
+    =
+Store-interest classification
+```
+
+This also makes the classification auditable because each tracked person can be associated with their trajectory, ROI sequence, interest reason, and final outcome.
+
+This visualization provides a direct qualitative check that the detected trajectories and behavioural decisions correspond to the observed movement in the video.
+
+![Detection and Tracking](outputs/Anaysis_based_on_motion.png)
+
+### 3.10 Interest Outcome Distribution
+
+A summary pie chart is generated from the final per-track classifications.
+
+The chart shows the distribution of:
+
+- Interested + Entered
+- Interested + Passed
+- Not Interested
+
+The chart provides a compact view of the relationship between store interest and subsequent store entry behaviour.
+
+![Interest Outcome Distribution](outputs/interest_outcomes_pie.png)
+
+### 3.11 Why Recursive Least Squares (RLS) Was Used
+
+Direct frame-to-frame position differences produced noisy speed and direction estimates because small variations in the detected bounding-box position can create large instantaneous changes in the estimated motion.
+
+A conventional moving average can reduce this noise, but it also introduces additional smoothing and lag and requires choosing a fixed window size. This is undesirable when the objective is to identify **gradual behavioural changes**, such as a person progressively slowing down near the store.
+
+Recursive Least Squares (RLS) was therefore used to estimate the underlying local trajectory behaviour online.
+
+For each tracked person, RLS incrementally fits the observed trajectory as new position measurements arrive. The fitted trajectory provides a smoother estimate of position and its time derivative, which can be used to obtain a more stable velocity and speed trend.
+
+Conceptually:
+
+```text
+Detected position
+       ↓
+Noisy frame-to-frame measurements
+       ↓
+Recursive Least Squares
+       ↓
+Smoothed trajectory
+       ↓
+Velocity / speed estimate
+       ↓
+Longer-term speed trend
+       ↓
+Behavioural analysis
+```
+
+The main reasons for using RLS are:
+
+- **Noise reduction:** reduces sensitivity to small frame-to-frame detection fluctuations.
+- **Online operation:** the trajectory can be updated incrementally without refitting the complete history at every frame.
+- **Temporal behaviour:** the fitted trend is more useful for detecting gradual slowing than instantaneous velocity.
+- **Per-person adaptation:** each tracked person maintains an independent trajectory model, allowing their own movement history to be used as the basis for behavioural analysis.
+- **Low-latency processing:** the estimator does not require storing and repeatedly processing a large sliding window for every update.
+
+RLS is therefore used primarily to obtain a **stable representation of motion and speed trend**, rather than relying on noisy instantaneous acceleration or velocity measurements for behavioural decisions.
